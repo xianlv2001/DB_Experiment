@@ -1,21 +1,12 @@
 # Lab 1: Deploy a TiDB Cluster on AWS EKS
 
-This lab builds a **TiDB** cluster on **Amazon EKS**, managed by **TiDB Operator** and provisioned as code with **Pulumi**.
+This lab builds a **TiDB** cluster on **Amazon EKS**. The cluster is managed by **TiDB Operator**, and the whole deployment is automated with **Pulumi** as Infrastructure-as-Code.
 
-| Technology | Role in This Lab |
-| ---------- | ---------------- |
-| Amazon EKS | Managed Kubernetes cluster on AWS |
-| TiDB Operator | Deploys and operates TiDB on Kubernetes |
-| Pulumi | Defines the whole stack as Infrastructure-as-Code |
-| TiDB | Distributed, MySQL-compatible SQL database (HTAP) |
-| TiDB Dashboard & Grafana | Cluster diagnostics and monitoring |
-
-<!-- TOC -->
-* [Lab 1: Deploy a TiDB Cluster on AWS EKS](#lab-1-deploy-a-tidb-cluster-on-aws-eks)
-  * [Prerequisites](#prerequisites)
-  * [Lab Roadmap](#lab-roadmap)
-  * [AWS Billing](#aws-billing)
-<!-- TOC -->
+| | |
+|:--|:--|
+| **Tech stack** | Amazon EKS · TiDB Operator · TiDB · Pulumi (TypeScript) |
+| **Scoring** | 100 basic points + 20 bonus points = **120 points** |
+| **Lab brief** | [PDF](./VLDB%20ss%202023%20lab%201.pdf) · [PPTX](./VLDB%20ss%202023%20lab%201.pptx) |
 
 ## Prerequisites
 
@@ -24,8 +15,6 @@ This lab builds a **TiDB** cluster on **Amazon EKS**, managed by **TiDB Operator
 - Linux, macOS, or WSL2
 
 ## Lab Roadmap
-
-Total: **100 points + 20 bonus points = 120 points**. Complete the steps in order.
 
 | # | Step | Points | Est. Time |
 | :- | :--- | -----: | :-------- |
@@ -37,8 +26,7 @@ Total: **100 points + 20 bonus points = 120 points**. Complete the steps in orde
 | 5 | [Cleanup: destroy the EKS cluster via Pulumi](./1-create-an-eks-cluster/README.md#do-not-execute-this-step-until-lab-1-finished-destroy-the-eks-cluster-via-pulumi) | 10 | — |
 | B | Bonus: [configure the TiDB slow-log threshold](./%5Bbonus%5Dconfig-slow-log-threshold/README.md) | 20 | — |
 
-> - Run steps 1–4 in **the same shell session**; if it is closed, re-run `export KUBECONFIG=$PWD/../1-create-an-eks-cluster/kubeconfig.yaml`.
-> - The lab brief is available as [`VLDB ss 2023 lab 1.pdf`](<./VLDB ss 2023 lab 1.pdf>) and [`.pptx`](<./VLDB ss 2023 lab 1.pptx>).
+> **Note:** Run steps 1–4 in **the same shell session**; if it is closed, re-run `export KUBECONFIG=$PWD/../1-create-an-eks-cluster/kubeconfig.yaml`.
 
 ## AWS Billing
 
