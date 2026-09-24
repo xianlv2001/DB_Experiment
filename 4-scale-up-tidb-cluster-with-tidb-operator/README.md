@@ -1,6 +1,9 @@
 # Step 4: Scale up TiDB Cluster with TiDB Operator
 
-The following steps guides you the basic usage of a newly deployed TiDB cluster. It takes about 10 minutes to complete.
+The following steps guide you through scaling out the TiKV storage layer of the TiDB cluster deployed in Step 2, from
+one TiKV node to two. It takes about 10 minutes to complete.
+
+> TiKV is the storage engine that holds your data: adding a TiKV node spreads the data (regions) across more stores.
 
 > - Please make sure you have completed [Step 1: Create an EKS cluster](../1-create-an-eks-cluster/README.md) and use
     **_the same shell session_** before proceeding.
@@ -9,17 +12,19 @@ The following steps guides you the basic usage of a newly deployed TiDB cluster.
 
 <!-- TOC -->
 * [Step 4: Scale up TiDB Cluster with TiDB Operator](#step-4-scale-up-tidb-cluster-with-tidb-operator)
-  * [Just Return to the Code of Step 2 `2-deploy-tidb-with-tidb-operator`](#just-return-to-the-code-of-step-2-2-deploy-tidb-with-tidb-operator)
-  * [Edit the TiDB Manifest File in Step 2 `2-deploy-tidb-with-tidb-operator`](#edit-the-tidb-manifest-file-in-step-2-2-deploy-tidb-with-tidb-operator)
+  * [Just Return to the Code of Step 2](#just-return-to-the-code-of-step-2)
+  * [Edit the TiDB Manifest File in Step 2](#edit-the-tidb-manifest-file-in-step-2)
   * [Follow the Step 2 Instructions and Apply the Manifest Files](#follow-the-step-2-instructions-and-apply-the-manifest-files)
   * [[20 Scoring Point] Wait for TiDB Cluster Ready](#20-scoring-point-wait-for-tidb-cluster-ready)
 <!-- TOC -->
 
-## Just Return to the Code of Step 2 [`2-deploy-tidb-with-tidb-operator`](../2-deploy-tidb-with-tidb-operator/README.md)
+## Just Return to the Code of Step 2
 
-## Edit the TiDB Manifest File in Step 2 [`2-deploy-tidb-with-tidb-operator`](../2-deploy-tidb-with-tidb-operator/README.md)
+Go back to [`2-deploy-tidb-with-tidb-operator`](../2-deploy-tidb-with-tidb-operator/README.md).
 
-[`tidb-cluster.yaml`](../2-deploy-tidb-with-tidb-operator/tidb-cluster-manifests/tidb-cluster.yaml)
+## Edit the TiDB Manifest File in Step 2
+
+Edit [`tidb-cluster.yaml`](../2-deploy-tidb-with-tidb-operator/tidb-cluster-manifests/tidb-cluster.yaml):
 
 ```diff
   tikv:
@@ -68,3 +73,8 @@ tidb-scheduler-55d58fdd7f-kch9g            2/2     Running   0          141m
 ```
 
 You can see the newly created `basic-tikv-1` pod.
+
+> Here `replicas: 2` means two TiKV **nodes (stores)**; it does not change the number of data replicas (PD's
+  `max-replicas`, 3 by default -- see the notes in the
+  [Step 2 README](../2-deploy-tidb-with-tidb-operator/README.md#database-components-and-their-manifests)).
+> The `AGE` values and pod names above are from the original run; your own output will differ.

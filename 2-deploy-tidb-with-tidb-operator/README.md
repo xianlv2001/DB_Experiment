@@ -1,12 +1,14 @@
 # Step 2: Deploy a TiDB Cluster with TiDB Operator
 
-The following steps guides you through the process of scaling TiKV instance for a TiDB Operator managed cluster. It takes about
-10 minutes to complete.
+The following steps guide you through the process of deploying TiDB Operator and a TiDB cluster on the EKS cluster created
+in Step 1. It takes about 10 minutes to complete.
 
 > - Please make sure you have completed [Step 1: Create an EKS cluster](../1-create-an-eks-cluster/README.md) and use
     **_the same shell session_** before proceeding.
 > - If you have closed the shell session, please run `export KUBECONFIG=$PWD/../1-create-an-eks-cluster/kubeconfig.yaml`
     to load the kubeconfig env.
+> - **Run all `pulumi` commands from this directory** (`2-deploy-tidb-with-tidb-operator/`); the stack is bound to the
+    project name declared in this directory's `Pulumi.yaml`.
 
 <!-- TOC -->
 * [Step 2: Deploy a TiDB Cluster with TiDB Operator](#step-2-deploy-a-tidb-cluster-with-tidb-operator)
@@ -18,6 +20,9 @@ The following steps guides you through the process of scaling TiKV instance for 
     * [How Does Operator Work?](#how-does-operator-work)
       * [Reconcile Pattern](#reconcile-pattern)
   * [Deploy TiDB Operator and TiDB Cluster via Pulumi](#deploy-tidb-operator-and-tidb-cluster-via-pulumi)
+    * [Point the StackReference at Your Own Step 1 Stack](#point-the-stackreference-at-your-own-step-1-stack)
+    * [What `index.ts` Deploys](#what-indexts-deploys)
+    * [Database Components and Their Manifests](#database-components-and-their-manifests)
     * [TiUP(Bare-Metal) vs TiDB Operator(On-Kubernetes)](#tiupbare-metal-vs-tidb-operatoron-kubernetes)
   * [[25 Scoring Point] Wait for TiDB Cluster Ready](#25-scoring-point-wait-for-tidb-cluster-ready)
 <!-- TOC -->
@@ -94,12 +99,68 @@ $ pulumi up
 Updating (default):
      Type                                                                  Name                                      Status
      pulumi:pulumi:Stack                                                   2-deploy-tidb-with-tidb-operator-default
- +-  ├─ kubernetes:helm.sh/v3:Release                                      tidb-operator                             craeted (22s)
+ +-  ├─ kubernetes:helm.sh/v3:Release                                      tidb-operator                             created (22s)
      ├─ kubernetes:yaml:ConfigGroup                                        tidb-operator-crds
      │  └─ kubernetes:yaml:ConfigFile                                      crds/tidb-operator-v1.4.4.yaml
- +-  │     ├─ kubernetes:apiextensions.k8s.io/v1:CustomResourceDefinition  tidbinitializers.pingcap.com              craeted (2s)
+ +-  │     ├─ kubernetes:apiextensions.k8s.io/v1:CustomResourceDefinition  tidbinitializers.pingcap.com              created (2s)
      ... dozens of resources omitted ...
 ```
+
+### Point the StackReference at Your Own Step 1 Stack
+
+[`index.ts`](./index.ts) starts by importing Step 1's stack:
+
+```ts
+const eksCluster = new pulumi.StackReference(
+    'organization/1-create-an-eks-cluster/default'
+)
+```
+
+With `pulumi login --local`, a stack's full name is `<username>/<project>/<stack>` and the `<username>` is your OS user
+name. It is **not** the literal string `organization` unless your login name happens to be `organization`. Before
+`pulumi up`, replace `organization` with your own user name (check it with `pulumi stack ls`, or in the prompt of
+`pulumi stack select` in Step 1), for example:
+
+```ts
+const eksCluster = new pulumi.StackReference(
+    'your-username/1-create-an-eks-cluster/default'
+)
+```
+
+Without this change `pulumi up` fails with an error like `Error: unknown stack ... 'organization/1-create-an-eks-cluster/default'`.
+
+### What `index.ts` Deploys
+
+1. A `k8s.Provider` wired to Step 1's exported `kubeconfig` output.
+2. The **TiDB Operator CRDs** from `crds/tidb-operator-v1.4.4.yaml` (a `ConfigGroup` of ten `CustomResourceDefinition`s:
+   `TidbCluster`, `TidbMonitor`, `TidbDashboard`, `TidbInitializer`, `Backup`, `BackupSchedule`, `Restore`, `DMCluster`,
+   `TidbClusterAutoScaler`, `TidbNGMonitoring`).
+3. The **TiDB Operator** itself as a Helm chart release (`charts.pingcap.org`, chart `tidb-operator` v1.4.4) -- the
+   controller pods `tidb-controller-manager` and `tidb-scheduler`.
+4. The **TiDB cluster CRs** from `tidb-cluster-manifests/*.yaml`, submitted through the operator (see the next section).
+
+### Database Components and Their Manifests
+
+| Manifest | Kubernetes kind | Component in the TiDB cluster | Image version |
+|---|---|---|---|
+| `tidb-cluster-manifests/tidb-cluster.yaml` | `TidbCluster` (pingcap.com/v1alpha1) | One replica each of **PD** (metadata/scheduling), **TiKV** (row + KV storage engine) and **TiDB** (MySQL-protocol SQL layer); only PD and TiKV declare persistent storage | v7.1.0 |
+| `tidb-cluster-manifests/tidb-dashboard.yaml` | `TidbDashboard` | **TiDB Dashboard**, the built-in web UI (slow queries, traffic, cluster info); requests 1Gi of storage | `latest` |
+| `tidb-cluster-manifests/tidb-monitor.yaml` | `TidbMonitor` | **Prometheus + Grafana** monitoring stack for the cluster | prometheus v2.27.1 / grafana 7.5.11 |
+
+All three CRs are applied to the `default` namespace and watch the cluster named `basic`.
+
+Sizing notes in `tidb-cluster.yaml` (keep them in mind if you touch the manifest):
+
+- `pd` and `tikv` request `1Gi` of storage each (the `tidb` component declares none), and the dashboard requests `1Gi`;
+  these PVCs are bound through the EBS CSI driver installed in Step 1 and are the EBS volumes behind the root README's
+  price table (the monitor adds its own PVCs through operator defaults).
+- `maxFailoverCount: 0` disables automatic failover-replicas for every component: the lab keeps a fixed, minimal topology.
+- `tikv.config.storage.reserve-space: "0MB"` and `rocksdb/raftdb.max-open-files: 256` shrink TiKV's footprint so it
+  fits the `t2.medium` worker nodes.
+- In this manifest `replicas` is the number of **TiKV nodes (stores)**, not the number of data replicas. Data
+  replication is controlled by PD (`max-replicas`, 3 by default) and is out of scope of this lab.
+- The `index.ts` transformation that adds `pulumi.com/patchForce: "true"` annotations only forces ownership of the
+  applied CRs (re-`pulumi up` overwrites them); it does not change namespaces or anything else.
 
 ### TiUP(Bare-Metal) vs TiDB Operator(On-Kubernetes)
 

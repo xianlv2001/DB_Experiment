@@ -7,6 +7,7 @@
   * [How to Config Slow-Log Threshold?](#how-to-config-slow-log-threshold)
   * [What Kinds of SQL Statements May Slow Down?](#what-kinds-of-sql-statements-may-slow-down)
   * [[20 Scoring Points] What You Could Do?](#20-scoring-points-what-you-could-do)
+  * [Helper Script](#helper-script)
 <!-- TOC -->
 
 ## What is TiDB Slow-log?
@@ -55,4 +56,52 @@ Show your SQL Statements and screenshots of slow queries page in your report.
 Example:
 
 ![slow-queries](../.imgs/slow_query_example.png)
+
+### How to Do It (via Pulumi + TiDB Operator)
+
+The recommended `instance.tidb_slow_log_threshold` parameter lives in the TiDB component's config block of the
+[`TidbCluster` manifest](../2-deploy-tidb-with-tidb-operator/tidb-cluster-manifests/tidb-cluster.yaml):
+
+```diff
+  tidb:
+    baseImage: pingcap/tidb
+    maxFailoverCount: 0
+    replicas: 1
+    service:
+      type: ClusterIP
+-   config: {}
++   config:
++     instance:
++       tidb_slow_log_threshold: 6000
+```
+
+then re-apply it exactly like in Step 4:
+
+```bash
+$ cd ../2-deploy-tidb-with-tidb-operator/
+$ export PULUMI_CONFIG_PASSPHRASE=""
+$ pulumi stack select default
+$ pulumi up
+```
+
+Wait for `basic-tidb-0` to roll to the new config (`kubectl get po -w`), then verify inside a MySQL session:
+
+```bash
+mysql> SHOW VARIABLES LIKE 'tidb_slow_log_threshold';
+```
+
+For the (5 points) "design SQL statements" part, the committed
+[`cheat_scripts.sh`](./cheat_scripts.sh) creates two 5000-row tables you can use as a starting point (it inserts row by
+row through 10000 separate `mysql` invocations, which takes a while); the cross join hint at the bottom of the script
+shows one way to build a slow query on top of them.
+
+## Helper Script
+
+[`cheat_scripts.sh`](./cheat_scripts.sh) (not referenced anywhere else in the lab) seeds the test data described above.
+Run it with the port-forward from Step 3 active:
+
+```bash
+$ cd '[bonus]config-slow-log-threshold/'   # quote the path: the directory name contains square brackets
+$ ./cheat_scripts.sh
+```
 

@@ -16,7 +16,8 @@ framework.
   * [Create the EKS Cluster via Pulumi (may take more than **_10_** minutes)](#create-the-eks-cluster-via-pulumi-may-take-more-than-10-minutes)
     * [What Happened?](#what-happened)
   * [[25 Scoring Point] Interact with the Newly Created EKS Cluster](#25-scoring-point-interact-with-the-newly-created-eks-cluster)
-  * [[**Do Not Execute This Step until Lab 1 Finished**] Destroy the EKS Cluster via Pulumi](#do-not-execute-this-step-until-lab-1-finished-destroy-the-eks-cluster-via-pulumi)
+  * [What This Step Creates and Exports](#what-this-step-creates-and-exports)
+  * [[**Do Not Execute This Step until the Whole Lab is Finished**] Destroy the EKS Cluster via Pulumi](#do-not-execute-this-step-until-the-whole-lab-is-finished-destroy-the-eks-cluster-via-pulumi)
 <!-- TOC -->
 
 ## About AWS EKS
@@ -85,6 +86,12 @@ Infrastructure as code (IaC) means using **code** to define and manage modern cl
   - **Configuration**: The Pulumi stack config file is a YAML file that contains configuration values, which are **defined in program**, for a specific stack. The file is named `Pulumi.<stack-name>.yaml`.
   - **State**: The state of a Pulumi stack is a snapshot of all the resources in that stack. The state is stored in local files or in a cloud service such as Pulumi's SaaS backend and AWS S3.
 
+> - With `pulumi login --local` the stack full name is `<username>/<project-name>/<stack-name>`, and the `<username>`
+    is your OS user name -- not a literal string like `organization`.
+    [Step 2](../2-deploy-tidb-with-tidb-operator/README.md) references this stack by full name, and it must match
+    yours. You can check it with `pulumi stack ls`.
+> - Always run `pulumi up` **inside this step's directory**: the project name in `Pulumi.yaml` is bound to the directory.
+
 ## Initialize to Pulumi
 
 ```bash
@@ -116,6 +123,17 @@ Updating (default):
 5. The deployment engine creates, updates, or deletes resources as needed to **bring** the infrastructure **into** the desired state.
 6. The deployment engine **records** the current state of the infrastructure as the new desired state.
 
+## What This Step Creates and Exports
+
+The program in [`index.ts`](./index.ts) creates:
+
+- One **EKS cluster** `my-eks` (created via `@pulumi/eks` with defaults; the default node group runs two `t2.medium` EC2 worker nodes).
+- The IAM plumbing for the **EBS CSI driver** addon: an OIDC provider for the cluster, an IAM role trusted by that OIDC provider, and the `aws-ebs-csi-driver` addon itself. **Do not delete these resources** -- Step 2 relies on the CSI driver to bind the EBS volumes (PVs) requested by the TiDB pods.
+
+and exports:
+
+- `kubeconfig`: the credentials file that lets `kubectl` (and Step 2's Kubernetes provider) talk to the new cluster.
+
 ## [25 Scoring Point] Interact with the Newly Created EKS Cluster
 
 ```bash
@@ -128,9 +146,14 @@ ip-xxx-xxx-xxx-xxx.us-west-2.compute.internal   Ready    <none>   27m   v1.27.1-
 ip-xxx-xxx-xxx-xxx.us-west-2.compute.internal   Ready    <none>   27m   v1.27.1-eks-2f008fe
 ```
 
-## [**Do Not Execute This Step until Lab 1 Finished**] Destroy the EKS Cluster via Pulumi
+## [**Do Not Execute This Step until the Whole Lab is Finished**] Destroy the EKS Cluster via Pulumi
 
 ```bash
 $ export PULUMI_CONFIG_PASSPHRASE="" # Set passphrase env to `""`. This passphrase is required by Pulumi and was created by Lab maintainer.
 $ pulumi destroy -y -s default
 ```
+
+> - "The whole lab" includes Step 2, Step 3, Step 4, the bonus task and your report; destroy only the EKS cluster after everything is graded.
+> - Because the TiDB cluster manifest uses `pvReclaimPolicy: Retain` (see the
+    [billing note](../README.md#aws-billing-price)), the EBS volumes backing the TiDB pods are kept after the destroy.
+    Delete them from the AWS console to stop being charged.

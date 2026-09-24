@@ -1,11 +1,15 @@
 # Step 3: Explore TiDB Basic Usage
 
-The following steps guides you the basic usage of a newly deployed TiDB cluster. It takes about 10 minutes to complete.
+The following steps guide you through the basic usage of a newly deployed TiDB cluster. It takes about 10 minutes to complete.
 
 > - Please make sure you have completed [Step 1: Create an EKS cluster](../1-create-an-eks-cluster/README.md) and use
     **_the same shell session_** before proceeding.
 > - If you have closed the shell session, please run `export KUBECONFIG=$PWD/../1-create-an-eks-cluster/kubeconfig.yaml`
     to load the kubeconfig env.
+> - This step does not run `pulumi up`; it only reads the deployment created in Step 2 through `kubectl` and `mysql`.
+> - The MySQL client used below must be installed beforehand (see
+    [Step 0: Install a MySQL Client](../0-install-dependencies/README.md#install-a-mysql-client)). TiDB pre-creates the
+    `test` database, so you can connect and create tables immediately.
 
 <!-- TOC -->
 * [Step 3: Explore TiDB Basic Usage](#step-3-explore-tidb-basic-usage)
@@ -16,6 +20,7 @@ The following steps guides you the basic usage of a newly deployed TiDB cluster.
   * [Access TiDB Dashboard and Grafana in Browser](#access-tidb-dashboard-and-grafana-in-browser)
   * [[20 Scoring Point] Access TiDB Cluster via MySQL Client](#20-scoring-point-access-tidb-cluster-via-mysql-client)
     * [Create A `hello_world` Table](#create-a-helloworld-table)
+    * [About the `information_schema` Examples](#about-the-informationschema-examples)
     * [Query the TiDB Version](#query-the-tidb-version)
     * [Query the TiDB Cluster Information](#query-the-tidb-cluster-information)
 <!-- TOC -->
@@ -121,6 +126,18 @@ Check Table Before Drop: false
                   Store: tikv
 1 row in set (0.01 sec)
 ```
+
+### About the `information_schema` Examples
+
+The two system tables used above are read-only views into the cluster's metadata:
+
+- `information_schema.tikv_region_status`: how the `hello_world` table is split into **regions** (TiKV's unit of data
+  sharding and replication, managed by PD). A freshly created, empty table sits in a single region, which is why the
+  query returns one row.
+- `information_schema.cluster_info`: one row per live component (tidb / pd / tikv) with its version, git hash and uptime.
+
+> The exact columns and values differ between TiDB versions and change while the cluster runs -- the outputs below were
+  captured from TiDB v7.1.0 in June 2023. Match the column names to your own version rather than copying the output.
 
 ### Query the TiDB Cluster Information
 
