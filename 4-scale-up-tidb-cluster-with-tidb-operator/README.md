@@ -1,6 +1,6 @@
 # Step 4: Scale up TiDB Cluster with TiDB Operator
 
-The following steps guides you the basic usage of a newly deployed TiDB cluster. It takes about 10 minutes to complete.
+The following steps guide you through scaling the TiKV instance of the TiDB Operator managed cluster from 1 replica to 2, by editing the Step 2 manifest and re-applying it with Pulumi. It takes about 10 minutes to complete.
 
 > - Please make sure you have completed [Step 1: Create an EKS cluster](../1-create-an-eks-cluster/README.md) and use
     **_the same shell session_** before proceeding.

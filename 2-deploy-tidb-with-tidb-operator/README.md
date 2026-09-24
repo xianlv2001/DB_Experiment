@@ -1,7 +1,6 @@
 # Step 2: Deploy a TiDB Cluster with TiDB Operator
 
-The following steps guides you through the process of scaling TiKV instance for a TiDB Operator managed cluster. It takes about
-10 minutes to complete.
+The following steps guide you through deploying the TiDB Operator, its CRDs, and a TiDB cluster (plus monitoring and dashboard) onto the EKS cluster created in Step 1, all via Pulumi. It takes about 10 minutes to complete.
 
 > - Please make sure you have completed [Step 1: Create an EKS cluster](../1-create-an-eks-cluster/README.md) and use
     **_the same shell session_** before proceeding.

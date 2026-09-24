@@ -23,6 +23,8 @@ Please refer to: https://docs.pingcap.com/tidb/stable/dashboard-slow-query and h
 - To focus on **specific types of slow queries**: The slow-log can be used to log different types of slow queries, such as queries that are using inefficient indexes or that are performing unnecessary joins. If you are only interested in a specific type of slow query, you can set the slow-log threshold to only log those types of queries.
 - To meet **read business workload** requirements: Business workload varies from company to company. For example, some companies may require that the response time of read requests be less than 1 second. In this case, you can set the slow-log threshold to 1 second to ensure that the slow-log can record all read requests that take longer than 1 second to execute.
 
+A helper script, [`cheat_scripts.sh`](./cheat_scripts.sh), is provided in this directory: it creates two tables, `test.table1` and `test.table2 (id INT AUTO_INCREMENT PRIMARY KEY, random_num FLOAT)`, inserts 5,000 random rows into each, and leaves designing the slow SQL statements (the 10-point item below) to you.
+
 ## How to Config Slow-Log Threshold?
 
 There are two ways to config slow-log threshold:
