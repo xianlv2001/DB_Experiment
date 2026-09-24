@@ -10,6 +10,7 @@
     * [Config AWS Credentials](#config-aws-credentials)
   * [Install `pulumi`](#install-pulumi)
   * [Install Helm](#install-helm)
+  * [Install a MySQL Client](#install-a-mysql-client)
 <!-- TOC -->
 
 ## Create Your Own GitHub Repository
@@ -20,6 +21,7 @@ Create a new GitHub repository base on [this template](https://github.com/vldbss
    ![use_template](../.imgs/use_template.png)
 2. Clone the newly created repository
 3. In the root directory of the repository, run `make install` to install the dependencies
+   (`npm install`; the repo's other make target, `make lint`, runs `npx eslint --fix .` and rewrites files in place)
 
 ## Install `kubectl`
 
@@ -39,7 +41,7 @@ $ nvm install 16
 ### Install AWS CLI
 
 - https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
-- `[aws-iam-authenticator](https://docs.aws.amazon.com/eks/latest/userguide/install-aws-iam-authenticator.html)`:
+- [aws-iam-authenticator](https://docs.aws.amazon.com/eks/latest/userguide/install-aws-iam-authenticator.html):
   Amazon EKS uses IAM to provide secure authentication to your Kubernetes cluster.
 
 ### Config AWS Credentials
@@ -74,3 +76,16 @@ $ curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scr
 $ chmod 700 get_helm.sh
 $ ./get_helm.sh
 ```
+
+> Helm is listed for completeness, but this lab does not strictly require the Helm CLI: the TiDB Operator chart in
+  Step 2 is installed through Pulumi's Kubernetes provider (`k8s.helm.v3.Release`), which renders the chart itself.
+
+## Install a MySQL Client
+
+Step 3 and the bonus task connect to TiDB over the MySQL protocol:
+
+- Debian/Ubuntu: `sudo apt-get install mysql-client`
+- MacOS: `brew install mysql-client` (then add `mysql` to your `PATH`)
+- Or use any MySQL-compatible client that supports the same command line flags (`--host`, `--port`, `--user`, `--comments`).
+
+TiDB creates a `test` database out of the box, so no manual database setup is needed.
