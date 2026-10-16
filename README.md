@@ -1,198 +1,365 @@
 # Lab 1: Deploy TiDB Cluster on AWS EKS
 
-This lab deploys a **TiDB cluster** on **AWS EKS**: the cluster is managed by the **TiDB Operator**, and the deployment is automated with **Pulumi** (infrastructure as code). In short: one Pulumi program creates a Kubernetes cluster, a second one installs TiDB on it, and the remaining steps teach you how to use, scale, and tune the database.
+This lab deploys a **TiDB cluster** on **AWS EKS**. The cluster is managed by the **TiDB Operator**, and the whole deployment process is automated with **Pulumi** (infrastructure as code).
+
+The official lab brief is [`VLDB ss 2023 lab 1.pdf`](./VLDB%20ss%202023%20lab%201.pdf) (slides: [`VLDB ss 2023 lab 1.pptx`](./VLDB%20ss%202023%20lab%201.pptx)).
 
 <!-- TOC -->
 * [Lab 1: Deploy TiDB Cluster on AWS EKS](#lab-1-deploy-tidb-cluster-on-aws-eks)
-  * [What You Will Learn](#what-you-will-learn)
-  * [Before You Start](#before-you-start)
+  * [Introduction](#introduction)
+  * [Architecture](#architecture)
+  * [Learning Objectives](#learning-objectives)
+  * [Pre-Requisites](#pre-requisites)
   * [Syllabus](#syllabus)
-  * [Versions Used](#versions-used)
+  * [Version Matrix](#version-matrix)
   * [Repository Layout](#repository-layout)
-  * [What Gets Deployed](#what-gets-deployed)
+  * [Core Modules](#core-modules)
+  * [Database Components](#database-components)
   * [Services and Ports](#services-and-ports)
   * [How to Run](#how-to-run)
   * [Troubleshooting](#troubleshooting)
-  * [Cost](#cost)
+  * [AWS Billing Price](#aws-billing-price)
+  * [Cost Cleanup Notes](#cost-cleanup-notes)
 <!-- TOC -->
 
-## What You Will Learn
+## Introduction
 
-- The basics of Kubernetes and its managed AWS service, EKS
-- The operator pattern: how the TiDB Operator manages a database on Kubernetes
-- How to deploy, use, and scale a TiDB cluster
-- How to automate all of it with Pulumi
+**Cloud computing** is the delivery of computing **services** -- including servers, storage, databases, networking, software, analytics, and intelligence -- over the internet ("the cloud") to offer faster innovation, flexible resources, and economies of scale, as your business needs change.
 
-## Before You Start
+**Amazon EKS** is a managed Kubernetes service that makes it easy for you to run **Kubernetes** on AWS. Kubernetes automates the deployment, scaling, and management of containerized applications.
 
-- An AWS account (this lab bills ~**0.19 USD/hour**, see [Cost](#cost))
-- VPN access to the AWS API and GitHub
-- Linux, macOS, or WSL2
-- Tools from [Step 0](./0-install-dependencies/README.md): Node.js 16, AWS CLI, Pulumi, `kubectl`, Helm
-- A `mysql` command-line client (Step 3 and Bonus)
-- Time: roughly 10-20 minutes per `pulumi up` (Steps 1, 2 and 4), a few minutes for the rest
+**TiDB** is an open-source distributed SQL database that supports HTAP workloads. It provides users with a one-stop database solution, and helps improve scalability, availability and reliability for users' data storage systems.
+
+When deploying TiDB clusters on AWS EKS, users can gain all features provided by TiDB, while leveraging the benefits of operating TiDB clusters on managed Kubernetes services.
+
+## Architecture
+
+One Pulumi program creates the Kubernetes cluster, a second one fills it with TiDB, and the remaining steps use, scale, and tune the database:
+
+```
+laptop (this repository, one shell session)
+    |
+    | pulumi up (Step 1)       pulumi up (Step 2)
+    v                               v
++----------------+ StackReference(kubeconfig) +---------------------+
+| 1-create-an-   | --------------------------> | 2-deploy-tidb-with- |
+| eks-cluster/   |                             | tidb-operator/      |
+| @pulumi/eks    |                             | @pulumi/kubernetes  |
++----------------+                             +---------------------+
+    |                                                  |
+    v                                                  v
++-------------------+ EBS CSI driver add-on  +--------------------+
+| AWS EKS cluster   | + IAM role +           | TiDB Operator      |
+| "my-eks"          | OIDC provider          | (Helm) + CRDs      |
+| 2 x t2.medium     | (so pods can mount     | v1.4.4             |
+| K8s 1.27          | EBS volumes)           | TidbCluster /      |
++-------------------+                        | TidbMonitor /      |
+    |                                        | TidbDashboard CRs  |
+    |                                        +--------------------+
+    | (the Step 2 CRs run on the cluster nodes)
+    |
+    +------------------> workloads <------------------+
+                        |
+  +---------+---------+--------+---------------+----------------+
+  v         v          v        v               v                v
+PD (1)  TiKV (1->2)  TiDB (1)  TidbDashboard   Monitor stack
+port    port         port      port 12333      Prometheus + Grafana
+2379    20160        4000      (web UI)        (port 3000)
+```
+
+`(1->2)` marks the Step 4 scale-up. Everything inside the cluster is `ClusterIP`; you reach TiDB, TiDB Dashboard, and Grafana from your laptop through the port-forwards started in Step 3.
+
+## Learning Objectives
+
+- Understand basic usage of Kubernetes
+- Understand basic usage of the AWS Kubernetes service (EKS)
+- Understand the fundamentals of the operator pattern
+- Learn to deploy TiDB clusters on Kubernetes with the TiDB Operator
+- Understand basic usage of TiDB clusters
+- Automate the deployment process with the Pulumi IaC framework
+
+## Pre-Requisites
+
+- An AWS account
+- VPN for connecting to the AWS API and GitHub
+- Linux, macOS, or WSL2 environments
+- Tools installed in [Step 0](./0-install-dependencies/README.md): Node.js 16, AWS CLI (with `aws-iam-authenticator`), Pulumi, `kubectl`, Helm
+- A `mysql` command-line client (used in Step 3 and the Bonus step)
+- Time budget: roughly 10-20 minutes per `pulumi up` for Steps 1, 2, and 4
+  (Pulumi waits for the infrastructure), a few minutes for the remaining steps,
+  plus tool installation in Step 0 (see the "Est. time" column in the Syllabus)
 
 ## Syllabus
 
 > 100 basic points + 20 bonus points = 120 total points.
 
-| Step | Content | Points |
+| Step | Content | Points | Est. time |
+| --- | --- | --- | --- |
+| 0 | [Install Dependencies](./0-install-dependencies/README.md) | -- | 30-60 min (once) |
+| 1 | [Create an EKS cluster](./1-create-an-eks-cluster/README.md) | 25 | 10-20 min |
+| 2 | [Deploy TiDB with the TiDB Operator](./2-deploy-tidb-with-tidb-operator/README.md) | 25 | 10-20 min |
+| 3 | [Explore TiDB basic usage](./3-explore-tidb-basic-usage/README.md) | 20 | ~10 min |
+| 4 | [Scale up the TiDB cluster with the TiDB Operator](./4-scale-up-tidb-cluster-with-tidb-operator/README.md) | 20 | ~10 min |
+| 5 | [Cleanup: destroy the EKS cluster via Pulumi](./1-create-an-eks-cluster/README.md#do-not-execute-this-step-until-lab-1-finished-destroy-the-eks-cluster-via-pulumi) | 10 | 5-10 min |
+| Bonus | [Configure the TiDB slow-log threshold and update the cluster with Pulumi](./%5Bbonus%5Dconfig-slow-log-threshold/README.md) | 20 | ~20 min |
+
+> **Order matters:** Steps 0 -> 1 -> 2 -> 3 -> 4 -> Bonus must be done in order, each
+> reusing the same shell session (or re-exporting `KUBECONFIG`, see
+> [How to Run](#how-to-run)). The Bonus step must be finished **before** Step 5
+> destroys the cluster.
+>
+> **Time budget:** the "Est. time" column above is per step and includes the
+> `pulumi up` waits for the infrastructure (Steps 1, 2, and 4); add the one-off
+> tool installation of Step 0 on top. The steps do not have to be done in one
+> sitting -- only in order, with `KUBECONFIG` re-exported in each new shell.
+
+## Version Matrix
+
+Key versions pinned in this lab. If you upgrade any of them, expect manifest /
+API changes and re-verify the affected steps.
+
+| Component | Version | Where it is pinned |
 | --- | --- | --- |
-| 0 | [Install Dependencies](./0-install-dependencies/README.md) | -- |
-| 1 | [Create an EKS cluster](./1-create-an-eks-cluster/README.md) | 25 |
-| 2 | [Deploy TiDB with the TiDB Operator](./2-deploy-tidb-with-tidb-operator/README.md) | 25 |
-| 3 | [Explore TiDB basic usage](./3-explore-tidb-basic-usage/README.md) | 20 |
-| 4 | [Scale up the TiDB cluster with the TiDB Operator](./4-scale-up-tidb-cluster-with-tidb-operator/README.md) | 20 |
-| 5 | [Cleanup: destroy the EKS cluster via Pulumi](./1-create-an-eks-cluster/README.md#do-not-execute-this-step-until-lab-1-finished-destroy-the-eks-cluster-via-pulumi) | 10 |
-| Bonus | [Configure the TiDB slow-log threshold and update the cluster with Pulumi](./%5Bbonus%5Dconfig-slow-log-threshold/README.md) | 20 |
-
-> **Order matters:** Steps 0 -> 1 -> 2 -> 3 -> 4 -> Bonus, in order, in the same
-> shell session. Finish the Bonus **before** Step 5 destroys the cluster.
-
-## Versions Used
-
-| Component | Version |
-| --- | --- |
-| TiDB / TiKV / PD | v7.1.0 |
-| TiDB Operator | v1.4.4 |
-| Kubernetes (EKS default) | 1.27 |
-| Node.js | 16 |
-| Prometheus / Grafana | v2.27.1 / 7.5.11 |
-
-All versions are pinned in the manifests and Pulumi programs, so re-running the
-lab reproduces the same stack. Change them only if you are prepared to re-verify
-the affected steps.
+| TiDB / TiKV / PD | v7.1.0 | `tidb-cluster-manifests/tidb-cluster.yaml` (`spec.version`) |
+| TiDB Operator | v1.4.4 | `2-deploy-tidb-with-tidb-operator/index.ts` (Helm chart version) + `crds/tidb-operator-v1.4.4.yaml` |
+| Kubernetes (EKS default) | 1.27 | created by the `@pulumi/eks` default in Step 1 |
+| Node.js | 16 | Step 0 (`nvm install 16`) |
+| Pulumi SDKs | `@pulumi/pulumi ~3.55`, `@pulumi/aws ~5.30`, `@pulumi/eks ^1.0`, `@pulumi/kubernetes ~3.29` | root `package.json` |
+| Prometheus / Grafana | v2.27.1 / 7.5.11 | `tidb-cluster-manifests/tidb-monitor.yaml` |
 
 ## Repository Layout
 
-Every numbered directory (and the bonus directory) is **self-contained**, with
-its own step-by-step `README.md`. Steps 1 and 2 also contain a standalone
-**Pulumi program** (TypeScript): `Pulumi.yaml` (project), `Pulumi.default.yaml`
-(state encryption salt for the `default` stack), and `index.ts` (entrypoint).
+Every numbered directory (and the bonus directory) is **self-contained**, with its
+own step-by-step `README.md`. Steps 1 and 2 additionally contain a standalone
+**Pulumi program** (TypeScript): each has a `Pulumi.yaml` (project + local
+`file://~/.pulumi` backend), a `Pulumi.default.yaml` (state encryption salt for the
+`default` stack), and an `index.ts` entrypoint.
+
+Two things to know about the Pulumi model before you start:
+
+- **State is stored on your machine** (`pulumi login --local`, backend
+  `file://~/.pulumi`), not in a shared backend. The `Pulumi.default.yaml` in
+  each step directory pins the encryption salt of the `default` stack, which is
+  why the `PULUMI_CONFIG_PASSPHRASE` must be exported exactly as documented.
+- **Step 2 depends on Step 1**: its `index.ts` reads the `kubeconfig` output of
+  the Step 1 stack via a `StackReference` to
+  `organization/1-create-an-eks-cluster/default`, so Step 1 must have been
+  applied from its own directory first.
 
 ```
 DB_Experiment/
-├── 0-install-dependencies/   # Tool installation guide
-├── 1-create-an-eks-cluster/  # Step 1: Pulumi program (EKS cluster + EBS CSI driver); also holds Step 5 destroy instructions
+├── 0-install-dependencies/
+│   └── README.md                     # Tool installation (Node.js 16, AWS CLI, Pulumi, kubectl, Helm)
+├── 1-create-an-eks-cluster/
+│   ├── README.md                     # Step 1 guide + EKS destroy instructions (Step 5 cleanup)
+│   ├── index.ts                      # Pulumi program: EKS cluster + EBS CSI driver addon
+│   ├── Pulumi.yaml                   # Pulumi project definition
+│   └── Pulumi.default.yaml           # Encryption salt for the `default` stack
 ├── 2-deploy-tidb-with-tidb-operator/
-│   ├── index.ts              # Step 2: Pulumi program (TiDB Operator via Helm + CRDs + manifests)
-│   ├── crds/                 #   TiDB Operator CRDs (v1.4.4)
-│   └── tidb-cluster-manifests/
-│       ├── tidb-cluster.yaml #   TidbCluster CR (PD / TiKV / TiDB)
-│       ├── tidb-monitor.yaml #   TidbMonitor CR (Prometheus + Grafana)
-│       └── tidb-dashboard.yaml # TidbDashboard CR
-├── 3-explore-tidb-basic-usage/     # Step 3 guide + set-up-port-forward.sh
-├── 4-scale-up-tidb-cluster-with-tidb-operator/  # Step 4 guide (edit Step 2 manifest, re-run Pulumi)
-├── [bonus]config-slow-log-threshold/  # Bonus guide + cheat_scripts.sh (test data)
-├── .imgs/                    # Images referenced by the READMEs
-├── Makefile                  # `make install` (npm install), `make lint` (default target)
-└── package.json              # Root npm dependencies (Pulumi AWS/EKS/Kubernetes SDKs)
+│   ├── README.md                     # Step 2 guide: operator pattern + deployment
+│   ├── index.ts                      # Pulumi program: TiDB Operator (Helm) + CRDs + TiDB cluster manifests
+│   ├── Pulumi.yaml                   # Pulumi project definition
+│   ├── Pulumi.default.yaml           # Encryption salt for the `default` stack
+│   ├── crds/
+│   │   └── tidb-operator-v1.4.4.yaml # All TiDB Operator CRDs (v1.4.4), applied via ConfigGroup
+│   └── tidb-cluster-manifests/       # Applied by the same Pulumi program:
+│       ├── tidb-cluster.yaml         #   TidbCluster CR (PD / TiKV / TiDB)
+│       ├── tidb-monitor.yaml         #   TidbMonitor CR (Prometheus + Grafana)
+│       └── tidb-dashboard.yaml       #   TidbDashboard CR
+├── 3-explore-tidb-basic-usage/
+│   ├── README.md                     # Step 3 guide
+│   └── set-up-port-forward.sh        # Port-forwards TiDB (4000), Dashboard (12333), Grafana (3000)
+├── 4-scale-up-tidb-cluster-with-tidb-operator/
+│   └── README.md                     # Step 4 guide: edit Step 2 manifest, re-run Pulumi
+├── [bonus]config-slow-log-threshold/
+│   ├── README.md                     # Bonus guide: slow-log threshold
+│   └── cheat_scripts.sh              # Creates table1/table2, inserts 5,000 rows each
+├── .imgs/                            # Images referenced by the READMEs
+├── Makefile                          # `make install` (npm install), `make lint` (eslint --fix, the default target)
+├── package.json                      # Root npm dependencies (Pulumi AWS/EKS/Kubernetes SDKs)
+└── VLDB ss 2023 lab 1.pdf / .pptx    # Lecture slides and the official lab brief
 ```
 
-(`VLDB ss 2023 lab 1.pdf` / `.pptx` at the root are the lecture slides.)
+## Core Modules
 
-## What Gets Deployed
+### `1-create-an-eks-cluster` (Pulumi program, run from its directory)
 
-Step 1 creates the infrastructure; Step 2 fills it with the database:
+- Creates the EKS cluster `my-eks` with two `t2.medium` worker nodes
+  (`@pulumi/eks` defaults, Kubernetes 1.27).
+- Installs the **EBS CSI driver** add-on: it creates the cluster OIDC provider,
+  an IAM role bound to the `ebs-csi-controller-sa` service account, and the
+  `aws-ebs-csi-driver` add-on -- required so TiDB pods can mount EBS volumes.
+- Exports `kubeconfig` as a stack output (`pulumi stack output kubeconfig`),
+  which Step 2 consumes via `StackReference`.
 
-- **Step 1** creates an EKS cluster (`my-eks`, two `t2.medium` nodes) plus the
-  **EBS CSI driver** add-on, which lets pods mount EBS volumes. It exports a
-  `kubeconfig` that every later step uses.
-- **Step 2** installs the TiDB Operator v1.4.4 (via Helm) and applies the CRDs,
-  then creates three custom resources: one `TidbCluster` (`basic`), one
-  `TidbMonitor`, and one `TidbDashboard`.
-- The `TidbCluster` runs **TiDB** (MySQL-compatible SQL layer), **TiKV** (storage)
-  and **PD** (placement driver), each starting with 1 replica (TiKV grows to 2 in
-  Step 4). Each component gets a **1 GiB** EBS volume -- 4 volumes total, 5 after Step 4.
+### `2-deploy-tidb-with-tidb-operator` (Pulumi program, run from its directory)
 
-For reference, the lab creates these tables along the way:
+- Reads the Step 1 stack output via `StackReference`
+  (`organization/1-create-an-eks-cluster/default`) and builds a Kubernetes
+  provider from its `kubeconfig`.
+- Applies the CRDs from `crds/*.yaml` via a `ConfigGroup`.
+- Installs **TiDB Operator v1.4.4** from the `https://charts.pingcap.org/` Helm
+  repository.
+- Applies `tidb-cluster-manifests/*.yaml`, creating one `TidbCluster` (`basic`),
+  one `TidbMonitor`, and one `TidbDashboard` custom resource.
+
+### Steps 0, 3, 4, and Bonus (documentation / scripts only)
+
+- `0-install-dependencies`: tool installation; also covers `make install`.
+- `3-explore-tidb-basic-usage`: services, port-forwarding, and first SQL
+  statements; uses `set-up-port-forward.sh`.
+- `4-scale-up-tidb-cluster-with-tidb-operator`: edits
+  `2-deploy-tidb-with-tidb-operator/tidb-cluster-manifests/tidb-cluster.yaml`
+  (TiKV `replicas: 1 -> 2`), then re-runs `pulumi up` from the Step 2 directory.
+- `[bonus]config-slow-log-threshold`: adjusts `tidb_slow_log_threshold` in the
+  `TidbCluster` manifest, designs and runs slow SQL, and verifies it in TiDB
+  Dashboard; `cheat_scripts.sh` prepares the test tables.
+
+## Database Components
+
+Deployed by the Step 2 Pulumi program (versions are pinned in the manifests as
+of this lab; check them when re-running with newer tooling):
+
+- **TiDB v7.1.0** (`TidbCluster` CR `basic`): MySQL-compatible SQL layer,
+  1 replica, ClusterIP service `basic-tidb` on port **4000**.
+- **TiKV v7.1.0** / **PD v7.1.0**: row storage engine and placement driver
+  (cluster-wide version from `spec.version`), each starts with **1 replica**
+  (TiKV is scaled to 2 in Step 4), ports 20160 (TiKV) and 2379 (PD).
+- **TiDB Dashboard** (`TidbDashboard` CR): web UI, port-forwarded on
+  `localhost:12333`.
+- **TiDB Monitor** (`TidbMonitor` CR): Prometheus v2.27.1 + Grafana 7.5.11,
+  port-forwarded on `localhost:3000` (Grafana `admin`/`admin`).
+- The `TidbCluster` manifest requests a **1 GiB** EBS volume for each of
+  PD / TiKV / TiDB, and the `TidbDashboard` manifest requests one more 1 GiB
+  volume for its own PVC -- **4 volumes** in total (**5** after Step 4 scales
+  TiKV to 2 replicas).
+
+The TiDB Operator CRDs (`crds/tidb-operator-v1.4.4.yaml`) define the full
+operator family (`TidbCluster`, `TidbMonitor`, `TidbDashboard`, `Backup`,
+`BackupSchedule`, `DMCluster`, ...). This lab only uses `TidbCluster`,
+`TidbMonitor`, and `TidbDashboard`.
+
+### Database tables used in the lab
 
 | Table | Created in | Purpose |
 | --- | --- | --- |
-| `test.hello_world` | Step 3, via `mysql` client | Inspect region status, `tidb_version()`, cluster info |
-| `test.table1` / `test.table2` | Bonus, via `cheat_scripts.sh` | 5,000 random rows each, for designing slow queries |
+| `test.hello_world (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, v VARCHAR(32))` | Step 3, manually via `mysql` client | Inspect `information_schema.tikv_region_status`, `tidb_version()`, `information_schema.cluster_info` |
+| `test.table1 (id INT AUTO_INCREMENT PRIMARY KEY, random_num FLOAT)` | Bonus, by `cheat_scripts.sh` | Load data for designing slow queries (5,000 random rows) |
+| `test.table2 (id INT AUTO_INCREMENT PRIMARY KEY, random_num FLOAT)` | Bonus, by `cheat_scripts.sh` | Load data for designing slow queries (5,000 random rows) |
 
 ## Services and Ports
 
-Everything Step 2 deploys is `ClusterIP` inside the cluster; on your laptop you
-reach it through the port-forwards started by `set-up-port-forward.sh` in Step 3.
+Quick reference for everything Step 2 deploys. All services are `ClusterIP`
+inside the cluster; from your laptop you reach them through the port-forwards
+started by `set-up-port-forward.sh` in Step 3.
 
-| Component | Service | Port | Access after port-forward |
+| Component | Service | Port | How to access |
 | --- | --- | --- | --- |
-| TiDB (SQL) | `basic-tidb` | 4000 | `mysql --comments -h 127.0.0.1 -P 4000 -u root` |
-| TiDB Dashboard | `basic-tidb-dashboard-exposed` | 12333 | http://localhost:12333, empty password |
-| Grafana | `basic-grafana` | 3000 | http://localhost:3000, `admin`/`admin` |
+| TiDB (SQL) | `basic-tidb` | 4000 | `mysql --comments -h 127.0.0.1 -P 4000 -u root` after port-forward |
+| TiDB status / metrics API | `basic-tidb` | 10080 | not port-forwarded in this lab |
+| PD | `basic-pd` | 2379 | internal |
+| TiKV | `basic-tikv-peer` | 20160 | internal |
+| TiDB Dashboard | `basic-tidb-dashboard-exposed` | 12333 | http://localhost:12333 after port-forward, empty password |
+| Grafana | `basic-grafana` | 3000 | http://localhost:3000 after port-forward, `admin`/`admin` |
+| Prometheus | `basic-prometheus` | 9090 | internal (scraped by Grafana dashboards) |
 
-PD (2379), TiKV (20160), Prometheus (9090) and the TiDB status API (10080) stay
-internal -- the lab does not port-forward them.
+`cheat_scripts.sh` (Bonus) is a plain helper script: it is idempotent on the
+table side (`CREATE TABLE IF NOT EXISTS`), but each run inserts **another**
+5,000 rows into `table1`/`table2` -- run it once, and rerun only if you want
+more data.
 
 ## How to Run
 
-Run the steps in order, ideally in **one shell session**. Three things live in
-that session and must be re-exported if you open a new shell:
+Run the steps in order, ideally inside **one shell session**. The session state
+that later steps depend on:
 
-| Variable | Where it comes from |
-| --- | --- |
-| `KUBECONFIG` | Step 1: `export KUBECONFIG=$PWD/kubeconfig.yaml` after `pulumi stack output kubeconfig > kubeconfig.yaml` |
-| `PULUMI_CONFIG_PASSPHRASE=""` | export before every `pulumi up` / `pulumi destroy` |
-| AWS credentials | `aws configure` in Step 0 |
+| Environment variable | Set by | Needed by |
+| --- | --- | --- |
+| `KUBECONFIG` | Step 1 (`pulumi stack output kubeconfig > kubeconfig.yaml`) | Steps 2-4, Bonus (`kubectl`, and Step 2's Pulumi program) |
+| `PULUMI_CONFIG_PASSPHRASE=""` | before every `pulumi up` / `pulumi destroy` | Steps 1, 2, 4, 5 |
+| AWS credentials (`aws configure`) | Step 0 | Steps 1 and 5 |
+
+If you open a new shell, re-export `KUBECONFIG` (see the table above) before
+continuing.
 
 1. `make install` at the repository root, plus the manual tools in
-   [Step 0](./0-install-dependencies/README.md).
-2. [Step 1](./1-create-an-eks-cluster/README.md): from `1-create-an-eks-cluster/`,
-   run `pulumi login --local`, `export PULUMI_CONFIG_PASSPHRASE=""`,
-   `pulumi stack select default -c`, then `pulumi up`. Afterwards:
-   `pulumi stack output kubeconfig > kubeconfig.yaml` and
-   `export KUBECONFIG=$PWD/kubeconfig.yaml`.
+   [Step 0](./0-install-dependencies/README.md) (`kubectl`, AWS CLI, Pulumi,
+   Helm, Node.js 16).
+2. [Step 1](./1-create-an-eks-cluster/README.md): from
+   `1-create-an-eks-cluster/`, run `pulumi login --local`,
+   `export PULUMI_CONFIG_PASSPHRASE=""`, `pulumi stack select default -c`, then
+   `pulumi up`. Afterwards: `pulumi stack output kubeconfig > kubeconfig.yaml`
+   and `export KUBECONFIG=$PWD/kubeconfig.yaml`.
    **Verify:** `kubectl get nodes` shows 2 `Ready` nodes.
 3. [Step 2](./2-deploy-tidb-with-tidb-operator/README.md): from
    `2-deploy-tidb-with-tidb-operator/`, select the stack and `pulumi up` again.
    If you opened a new shell, first run
    `export KUBECONFIG=$PWD/../1-create-an-eks-cluster/kubeconfig.yaml`.
-   **Verify:** `kubectl get po` eventually shows `basic-tidb-0`, `basic-tikv-0`,
-   `basic-pd-0` all `Running` (several minutes).
+   **Verify:** `kubectl get po` eventually shows `basic-tidb-0`,
+   `basic-tikv-0`, `basic-pd-0` all `Running` (takes several minutes).
 4. [Step 3](./3-explore-tidb-basic-usage/README.md): `./set-up-port-forward.sh`,
-   then `mysql --comments -h 127.0.0.1 -P 4000 -u root`.
+   then connect with `mysql --comments -h 127.0.0.1 -P 4000 -u root`.
    **Verify:** `select tidb_version();` returns v7.1.0.
 5. [Step 4](./4-scale-up-tidb-cluster-with-tidb-operator/README.md): edit
    `tidb-cluster.yaml` in Step 2 (`tikv.replicas: 1 -> 2`), re-run `pulumi up`
    from the Step 2 directory.
    **Verify:** `kubectl get po` shows a second TiKV pod, `basic-tikv-1`.
-6. [Bonus](./%5Bbonus%5Dconfig-slow-log-threshold/README.md): raise
-   `tidb_slow_log_threshold` in the `TidbCluster` manifest (via `pulumi up`),
-   run the slow SQL, check TiDB Dashboard.
+6. [Bonus](./%5Bbonus%5Dconfig-slow-log-threshold/README.md): adjust the
+   slow-log threshold in the `TidbCluster` manifest (via `pulumi up`), run the
+   slow SQL, verify in TiDB Dashboard.
 7. [Step 5 cleanup](./1-create-an-eks-cluster/README.md#do-not-execute-this-step-until-lab-1-finished-destroy-the-eks-cluster-via-pulumi):
-   `pulumi destroy -y -s default` in the Step 1 directory, **only after** the
-   whole lab (including the Bonus) is finished.
+   `pulumi destroy -y -s default` in the Step 1 directory **only after** the lab
+   (including the Bonus) is finished.
 
 ## Troubleshooting
 
-- **`pulumi up` fails to decrypt configuration**: run from the step directory
-  with `export PULUMI_CONFIG_PASSPHRASE=""` exactly as documented -- the stack
-  state is tied to that passphrase and the salt in `Pulumi.default.yaml`.
-- **`no stack named 'default' found` / `no stack selected`**: run
-  `pulumi stack select default -c` (first time) or `pulumi stack select default`
-  (afterwards) in the step directory that owns the program.
-- **`kubectl` cannot connect**: `KUBECONFIG` is not set. Re-export it:
-  `export KUBECONFIG=$PWD/../1-create-an-eks-cluster/kubeconfig.yaml`.
-- **`Permission denied` on `./set-up-port-forward.sh`**: run
-  `chmod +x set-up-port-forward.sh` or `bash set-up-port-forward.sh`. Keep the
-  script running in its own terminal; `Ctrl+C` stops all port-forwards.
-- **TiDB pods stuck in `Pending`**: usually the EBS CSI driver is missing (run
-  `pulumi up` in Step 1's directory, not Step 2's) or there is no default
-  storage class. Check with `kubectl describe po <pod>` and `kubectl get sc`.
-- **Bonus: slow queries not in TiDB Dashboard**: the new
-  `instance.tidb_slow_log_threshold` only takes effect after `pulumi up` and a
-  TiDB pod restart -- then re-run the slow SQL from a fresh `mysql` session.
+- **`pulumi up` fails with a decryption/salt error** (e.g.
+  `failed to decrypt encrypted configuration value`): the stack state is bound
+  to the salt in `Pulumi.default.yaml` and your `PULUMI_CONFIG_PASSPHRASE`.
+  Always run from the step directory with the passphrase exported exactly as
+  documented: `export PULUMI_CONFIG_PASSPHRASE=""`.
+- **`error: no stack named 'default' found` / `no stack selected`**: run
+  `pulumi stack select default -c` (first run) or `pulumi stack select default`
+  (subsequent runs) from the step directory that owns the program.
+- **`kubectl` cannot connect / `connection refused`**: `KUBECONFIG` is not
+  pointing at the Step 1 output. Re-export it:
+  `export KUBECONFIG=$PWD/../1-create-an-eks-cluster/kubeconfig.yaml`
+  (or the absolute path from wherever you are).
+- **`Permission denied` while running `./set-up-port-forward.sh`**: the script
+  is not executable yet. Run `chmod +x set-up-port-forward.sh`, or use
+  `bash set-up-port-forward.sh`. Keep the script running in its own terminal:
+  `Ctrl+C` tears down all port-forwards it started.
+- **TiDB pods stuck in `Pending`**: usually the EBS CSI driver was not
+  installed (Step 1 runs `pulumi up` from the Step 1 directory, not Step 2) or
+  the cluster does not yet have a default storage class. Inspect with
+  `kubectl describe po <pod>` and `kubectl get sc`.
+- **Bonus: slow queries do not appear in TiDB Dashboard**:
+  `instance.tidb_slow_log_threshold` only takes effect after `pulumi up`
+  re-applies the `TidbCluster` manifest and the TiDB pods have restarted -- then
+  re-run the slow SQL from a fresh `mysql` session.
 
-## Cost
+## AWS Billing Price
 
-| Item | Rate |
-| --- | --- |
-| EKS control plane | 1 x 0.10 USD/hour |
-| EC2 `t2.medium` workers | 2 x 0.0464 USD/hour |
-| EBS volumes (1 GiB each) | negligible |
-| **Total** | **~0.1928 USD/hour** (≈ 1.54 USD for an 8-hour session) |
+This lab will incur charges under the AWS account, described in detail at:
 
-> **Do not forget Step 5**: until you `pulumi destroy` the cluster, it keeps
-> billing ~0.19 USD/hour.
+- New EKS cluster control plane: **1** cluster x **0.10** USD per hour
+- Two EKS worker EC2 `t2.medium` instances: **2** instances x **0.0464** USD per hour
+- EBS volumes of 1 GiB each, with negligible cost
+  (4 volumes before Step 4 scales TiKV to 2 replicas, 5 after that step)
+
+Total: **0.1928** USD per hour (approximately **1.54** USD for a full 8-hour lab session).
+
+## Cost Cleanup Notes
+
+- Prices vary by AWS region and change over time; the numbers above are the
+  original 2023 lab estimates, so check your own AWS bill for the real amounts.
+- The `TidbCluster` manifest sets `pvReclaimPolicy: Retain`, so the EBS volumes
+  behind the PD / TiKV / TiDB pods are **not** deleted by `pulumi destroy`.
+  Remove them manually in the AWS console if you no longer need them.
+- The `TidbMonitor` / `TidbDashboard` resources create additional PVCs through
+  operator defaults; those are also left behind after destroy and can be
+  removed the same way.
+
+> **Cleanup reminder:** always finish with [Step 5](./1-create-an-eks-cluster/README.md#do-not-execute-this-step-until-lab-1-finished-destroy-the-eks-cluster-via-pulumi)
+> (`pulumi destroy -y -s default`), otherwise the cluster keeps billing at
+> ~0.19 USD/hour until it is destroyed.
